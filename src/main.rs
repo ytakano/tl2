@@ -3,7 +3,7 @@ use std::{thread, time};
 
 mod tl2;
 
-const NUM_PHILOSOPHERS: usize = 2;
+const NUM_PHILOSOPHERS: usize = 8;
 
 fn philosopher(stm: Arc<tl2::STM>, n: usize) {
     let left = 8 * n;
@@ -57,8 +57,14 @@ fn observer(stm: Arc<tl2::STM>) {
 
         println!("{:?}", chopsticks);
 
-        if (chopsticks[0] == 1 && chopsticks[1] == 0) || (chopsticks[0] == 0 && chopsticks[1] == 1)
-        {
+        let mut n = 0;
+        for c in &chopsticks {
+            if *c == 1 {
+                n += 1;
+            }
+        }
+
+        if n & 1 != 0 {
             panic!("inconsistent");
         }
 

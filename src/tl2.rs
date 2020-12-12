@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::sync::atomic::{fence, AtomicU64, Ordering};
 
 const STRIPE_SIZE: usize = 8; // u64, 8B
-const MEM_SIZE: usize = 128;
+const MEM_SIZE: usize = 512;
 
 #[macro_export]
 macro_rules! load {
