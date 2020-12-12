@@ -19,9 +19,9 @@ fn philosopher(stm: Arc<tl2::STM>, n: usize) {
                 f2[0] = 1;
                 store!(tr, left, f1);
                 store!(tr, right, f2);
-                tl2::TMResult::Ok(true)
+                tl2::STMResult::Ok(true)
             } else {
-                tl2::TMResult::Ok(false)
+                tl2::STMResult::Ok(false)
             }
         }) {
             //println!("#{} failed to pickup", n);
@@ -39,7 +39,7 @@ fn philosopher(stm: Arc<tl2::STM>, n: usize) {
             f2[0] = 0;
             store!(tr, left, f1);
             store!(tr, right, f2);
-            tl2::TMResult::Ok(())
+            tl2::STMResult::Ok(())
         });
     }
 }
@@ -52,7 +52,7 @@ fn observer(stm: Arc<tl2::STM>) {
                 v[i] = load!(tr, 8 * i)[0];
             }
 
-            tl2::TMResult::Ok(v)
+            tl2::STMResult::Ok(v)
         });
 
         println!("{:?}", chopsticks);

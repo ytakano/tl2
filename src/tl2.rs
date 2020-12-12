@@ -12,7 +12,7 @@ macro_rules! load {
         if let Some(v) = ($t).load($a) {
             v
         } else {
-            return tl2::TMResult::Retry;
+            return tl2::STMResult::Retry;
         }
     };
 }
@@ -31,7 +31,7 @@ pub struct Memory {
     shift_size: usize,
 }
 
-pub enum TMResult<T> {
+pub enum STMResult<T> {
     Ok(T),
     Retry,
 }
@@ -89,6 +89,10 @@ impl Memory {
         }
     }
 
+    fn inc_global_clock(&mut self) -> u64 {
+        self.global_clock.fetch_add(1, Ordering::AcqRel)
+    }
+
     fn unlock_addr(&mut self, addr: usize) {
         self.lock_ver[addr >> self.shift_size].fetch_and(!(1 << 63), Ordering::Relaxed);
     }
@@ -110,10 +114,7 @@ impl<'a> WriteTrans<'a> {
             write_set: HashMap::new(),
             locked: Vec::new(),
             is_abort: false,
-
-            // 1. Sample global version-clock
             read_ver: mem.global_clock.load(Ordering::Acquire),
-
             mem: mem,
         }
     }
@@ -162,43 +163,6 @@ impl<'a> WriteTrans<'a> {
         self.write_set.insert(addr, val);
     }
 
-    fn transaction<F, R>(&mut self, f: F) -> TMResult<R>
-    where
-        F: Fn(&mut WriteTrans) -> TMResult<R>,
-    {
-        // 2. Run through a speculative execution
-        let result;
-        match f(self) {
-            TMResult::Retry => {
-                return TMResult::Retry;
-            }
-            TMResult::Ok(val) => {
-                if self.is_abort {
-                    return TMResult::Retry;
-                }
-                result = val;
-            }
-        }
-
-        // 3. Lock the write-set
-        if !self.lock_write_set() {
-            return TMResult::Retry;
-        }
-
-        // 4. Increment global version-clock
-        let ver = 1 + self.inc_global_clock();
-
-        // 5. Validate the read-set
-        if !self.validate_read_set() {
-            return TMResult::Retry;
-        }
-
-        // 6. Commit and release the locks
-        self.commit(ver);
-
-        return TMResult::Ok(result);
-    }
-
     fn lock_write_set(&mut self) -> bool {
         for (addr, _) in self.write_set.iter() {
             if self.mem.lock_addr(*addr) {
@@ -224,10 +188,6 @@ impl<'a> WriteTrans<'a> {
             }
         }
         true
-    }
-
-    fn inc_global_clock(&mut self) -> u64 {
-        self.mem.global_clock.fetch_add(1, Ordering::AcqRel)
     }
 
     fn commit(&mut self, ver: u64) {
@@ -262,10 +222,7 @@ impl<'a> ReadTrans<'a> {
     fn new(mem: &Memory) -> ReadTrans {
         ReadTrans {
             is_abort: false,
-
-            // 1. Sample global version-clock
             read_ver: mem.global_clock.load(Ordering::Acquire),
-
             mem: mem,
         }
     }
@@ -319,26 +276,58 @@ impl STM {
 
     pub fn write_transaction<F, R>(&self, f: F) -> R
     where
-        F: Fn(&mut WriteTrans) -> TMResult<R>,
+        F: Fn(&mut WriteTrans) -> STMResult<R>,
     {
         loop {
+            // 1. Sample global version-clock
             let mut tr = WriteTrans::new(unsafe { &mut *self.mem.get() });
-            match tr.transaction(&f) {
-                TMResult::Retry => (),
-                TMResult::Ok(val) => return val,
+
+            // 2. Run through a speculative execution
+            let result;
+            match f(&mut tr) {
+                STMResult::Retry => {
+                    continue;
+                }
+                STMResult::Ok(val) => {
+                    if tr.is_abort {
+                        continue;
+                    }
+                    result = val;
+                }
             }
+
+            // 3. Lock the write-set
+            if !tr.lock_write_set() {
+                continue;
+            }
+
+            // 4. Increment global version-clock
+            let ver = 1 + tr.mem.inc_global_clock();
+
+            // 5. Validate the read-set
+            if !tr.validate_read_set() {
+                continue;
+            }
+
+            // 6. Commit and release the locks
+            tr.commit(ver);
+
+            return result;
         }
     }
 
     pub fn read_transaction<F, R>(&self, f: F) -> R
     where
-        F: Fn(&mut ReadTrans) -> TMResult<R>,
+        F: Fn(&mut ReadTrans) -> STMResult<R>,
     {
         loop {
+            // 1. Sample global version-clock
             let mut tr = ReadTrans::new(unsafe { &*self.mem.get() });
+
+            // 2. Run through a speculative execution
             match f(&mut tr) {
-                TMResult::Retry => (),
-                TMResult::Ok(val) => {
+                STMResult::Retry => (),
+                STMResult::Ok(val) => {
                     if tr.is_abort == true {
                         continue;
                     } else {
