@@ -1,7 +1,7 @@
 use std::cell::UnsafeCell;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{fence, AtomicU64, Ordering};
 
 const STRIPE_SIZE: usize = 8; // u64, 8B
 const MEM_SIZE: usize = 128;
@@ -63,7 +63,7 @@ impl Memory {
 
     fn test_not_modify(&self, addr: usize, rv: u64) -> bool {
         let n = self.lock_ver[addr >> self.shift_size].load(Ordering::Relaxed);
-        n & (1 << 63) == 0 && n <= rv
+        n <= rv
     }
 
     fn get_addr_ver(&self, addr: usize) -> u64 {
@@ -130,6 +130,14 @@ impl<'a> WriteTrans<'a> {
             return Some(*m);
         }
 
+        // pre validation
+        if !self.mem.test_not_modify(addr, self.read_ver) {
+            self.is_abort = true;
+            return None;
+        }
+
+        fence(Ordering::Acquire);
+
         // read from memory
         let mut mem = [0; STRIPE_SIZE];
         for (dst, src) in mem
@@ -138,6 +146,8 @@ impl<'a> WriteTrans<'a> {
         {
             *dst = *src;
         }
+
+        fence(Ordering::SeqCst);
 
         // post validation
         if !self.mem.test_not_modify(addr, self.read_ver) {
@@ -229,6 +239,8 @@ impl<'a> WriteTrans<'a> {
             let idx = addr >> self.mem.shift_size;
             self.mem.lock_ver[idx].store(ver, Ordering::Release);
         }
+
+        self.locked.clear();
     }
 }
 
@@ -237,6 +249,58 @@ impl<'a> Drop for WriteTrans<'a> {
         for addr in self.locked.iter() {
             self.mem.unlock_addr(*addr);
         }
+    }
+}
+
+pub struct ReadTrans<'a> {
+    read_ver: u64,
+    is_abort: bool,
+    mem: &'a Memory,
+}
+
+impl<'a> ReadTrans<'a> {
+    fn new(mem: &Memory) -> ReadTrans {
+        ReadTrans {
+            is_abort: false,
+
+            // 1. Sample global version-clock
+            read_ver: mem.global_clock.load(Ordering::Acquire),
+
+            mem: mem,
+        }
+    }
+
+    pub fn load(&mut self, addr: usize) -> Option<[u8; STRIPE_SIZE]> {
+        if self.is_abort {
+            return None;
+        }
+
+        // pre validation
+        if !self.mem.test_not_modify(addr, self.read_ver) {
+            self.is_abort = true;
+            return None;
+        }
+
+        fence(Ordering::Acquire);
+
+        // read from memory
+        let mut mem = [0; STRIPE_SIZE];
+        for (dst, src) in mem
+            .iter_mut()
+            .zip(self.mem.mem[addr..addr + STRIPE_SIZE].iter())
+        {
+            *dst = *src;
+        }
+
+        fence(Ordering::SeqCst);
+
+        // post validation
+        if !self.mem.test_not_modify(addr, self.read_ver) {
+            self.is_abort = true;
+            return None;
+        }
+
+        Some(mem)
     }
 }
 
@@ -262,6 +326,25 @@ impl STM {
             match tr.transaction(&f) {
                 TMResult::Retry => (),
                 TMResult::Ok(val) => return val,
+            }
+        }
+    }
+
+    pub fn read_transaction<F, R>(&self, f: F) -> R
+    where
+        F: Fn(&mut ReadTrans) -> TMResult<R>,
+    {
+        loop {
+            let mut tr = ReadTrans::new(unsafe { &*self.mem.get() });
+            match f(&mut tr) {
+                TMResult::Retry => (),
+                TMResult::Ok(val) => {
+                    if tr.is_abort == true {
+                        continue;
+                    } else {
+                        return val;
+                    }
+                }
             }
         }
     }

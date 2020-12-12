@@ -24,12 +24,12 @@ fn philosopher(stm: Arc<tl2::STM>, n: usize) {
                 tl2::TMResult::Ok(false)
             }
         }) {
-            println!("#{} failed to pickup", n);
+            //println!("#{} failed to pickup", n);
             let ten_millis = time::Duration::from_micros(1);
             thread::sleep(ten_millis);
         }
 
-        println!("#{} is eating", n);
+        //println!("#{} is eating", n);
 
         // release chopsticks
         stm.write_transaction(|tr| {
@@ -44,6 +44,29 @@ fn philosopher(stm: Arc<tl2::STM>, n: usize) {
     }
 }
 
+fn observer(stm: Arc<tl2::STM>) {
+    for _ in 0..10000 {
+        let chopsticks = stm.read_transaction(|tr| {
+            let mut v = [0; NUM_PHILOSOPHERS];
+            for i in 0..NUM_PHILOSOPHERS {
+                v[i] = load!(tr, 8 * i)[0];
+            }
+
+            tl2::TMResult::Ok(v)
+        });
+
+        println!("{:?}", chopsticks);
+
+        if (chopsticks[0] == 1 && chopsticks[1] == 0) || (chopsticks[0] == 0 && chopsticks[1] == 1)
+        {
+            panic!("inconsistent");
+        }
+
+        let ten_millis = time::Duration::from_micros(100);
+        thread::sleep(ten_millis);
+    }
+}
+
 fn main() {
     let stm = Arc::new(tl2::STM::new());
     let mut v = Vec::new();
@@ -54,7 +77,11 @@ fn main() {
         v.push(th);
     }
 
+    let obs = std::thread::spawn(move || observer(stm));
+
     for th in v {
         th.join().unwrap();
     }
+
+    obs.join().unwrap();
 }
