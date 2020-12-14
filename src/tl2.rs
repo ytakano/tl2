@@ -34,6 +34,7 @@ pub struct Memory {
 pub enum STMResult<T> {
     Ok(T),
     Retry,
+    Abort,
 }
 
 impl Memory {
@@ -274,7 +275,7 @@ impl STM {
         }
     }
 
-    pub fn write_transaction<F, R>(&self, f: F) -> R
+    pub fn write_transaction<F, R>(&self, f: F) -> Option<R>
     where
         F: Fn(&mut WriteTrans) -> STMResult<R>,
     {
@@ -285,6 +286,7 @@ impl STM {
             // 2. Run through a speculative execution
             let result;
             match f(&mut tr) {
+                STMResult::Abort => return None,
                 STMResult::Retry => {
                     continue;
                 }
@@ -312,11 +314,11 @@ impl STM {
             // 6. Commit and release the locks
             tr.commit(ver);
 
-            return result;
+            return Some(result);
         }
     }
 
-    pub fn read_transaction<F, R>(&self, f: F) -> R
+    pub fn read_transaction<F, R>(&self, f: F) -> Option<R>
     where
         F: Fn(&mut ReadTrans) -> STMResult<R>,
     {
@@ -326,12 +328,13 @@ impl STM {
 
             // 2. Run through a speculative execution
             match f(&mut tr) {
+                STMResult::Abort => return None,
                 STMResult::Retry => (),
                 STMResult::Ok(val) => {
                     if tr.is_abort == true {
                         continue;
                     } else {
-                        return val;
+                        return Some(val);
                     }
                 }
             }
