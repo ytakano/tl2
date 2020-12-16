@@ -307,7 +307,7 @@ impl STM {
             let ver = 1 + tr.mem.inc_global_clock();
 
             // 5. Validate the read-set
-            if ver != tr.read_ver && !tr.validate_read_set() {
+            if ver != tr.read_ver + 1 && !tr.validate_read_set() {
                 continue;
             }
 
