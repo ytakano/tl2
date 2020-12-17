@@ -125,6 +125,8 @@ impl<'a> WriteTrans<'a> {
             return None;
         }
 
+        assert_eq!(addr & (STRIPE_SIZE - 1), 0);
+
         self.read_set.insert(addr);
 
         // read from write-set
@@ -161,6 +163,7 @@ impl<'a> WriteTrans<'a> {
     }
 
     pub fn store(&mut self, addr: usize, val: [u8; STRIPE_SIZE]) {
+        assert_eq!(addr & (STRIPE_SIZE - 1), 0);
         self.write_set.insert(addr, val);
     }
 
@@ -232,6 +235,8 @@ impl<'a> ReadTrans<'a> {
         if self.is_abort {
             return None;
         }
+
+        assert_eq!(addr & (STRIPE_SIZE - 1), 0);
 
         // pre validation
         if !self.mem.test_not_modify(addr, self.read_ver) {
