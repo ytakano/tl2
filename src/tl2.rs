@@ -200,8 +200,13 @@ impl<'a> WriteTrans<'a> {
             for (dst, src) in self.mem.mem[addr..addr + STRIPE_SIZE].iter_mut().zip(val) {
                 *dst = *src;
             }
+        }
+
+        fence(Ordering::Release);
+
+        for (addr, _) in self.write_set.iter() {
             let idx = addr >> self.mem.shift_size;
-            self.mem.lock_ver[idx].store(ver, Ordering::Release);
+            self.mem.lock_ver[idx].store(ver, Ordering::Relaxed);
         }
 
         self.locked.clear();
