@@ -298,7 +298,10 @@ impl STM {
             match f(&mut tr) {
                 STMResult::Abort => return None,
                 STMResult::Retry => {
-                    continue;
+                    if tr.is_abort {
+                        continue;
+                    }
+                    return None;
                 }
                 STMResult::Ok(val) => {
                     if tr.is_abort {
@@ -339,7 +342,12 @@ impl STM {
             // 2. Run through a speculative execution
             match f(&mut tr) {
                 STMResult::Abort => return None,
-                STMResult::Retry => (),
+                STMResult::Retry => {
+                    if tr.is_abort {
+                        continue;
+                    }
+                    return None;
+                }
                 STMResult::Ok(val) => {
                     if tr.is_abort == true {
                         continue;
